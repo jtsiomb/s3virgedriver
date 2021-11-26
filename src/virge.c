@@ -42,7 +42,6 @@ int s3v_init(void)
 	}
 
 	if(!(pcidev = find_pci_dev(PCI_VENDOR_S3, PCI_DEVICE_VIRGE)) || !s3v_detect()) {
-		fprintf(stderr, "no compatible graphics card detected\n");
 		return -1;
 	}
 
@@ -80,36 +79,21 @@ void *s3v_set_video(int xsz, int ysz, int bpp)
 	/* enable new-style MMIO */
 	orig_memctl1 = crtc_read(REG_CRTCX_MEMCTL1);
 	crtc_write(REG_CRTCX_MEMCTL1, CRTCX_MEMCTL1_MMIO_NEW);
-	
+
 	/* make sure enhanced mode is enabled */
 	if(!(val = crtc_read(REG_CRTCX_MISC1)) & CRTCX_MISC1_ENH_EN) {
 		crtc_write(REG_CRTCX_MISC1, val | CRTCX_MISC1_ENH_EN);
 	}
-	/*
-	if(!(val = crtc_read(REG_CRTCX_MEMCFG)) & CRTCX_MEMCFG_ENHMAP) {
-		crtc_write(REG_CRTCX_MEMCFG, val | CRTCX_MEMCFG_ENHMAP);
-	}
-	*/
 	orig_memcfg = crtc_read(REG_CRTCX_MEMCFG);
 	val = (orig_memcfg & ~CRTCX_MEMCFG_BASEOFFS_EN) | CRTCX_MEMCFG_ENHMAP;
 	crtc_write(REG_CRTCX_MEMCFG, val);
 
 	while(S3D_BUSY);	/* wait for any pending S3D operations (unlikely) */
-	printf("stat: %08x\n", MMREG_STAT);
 
 	/* enable linear addressing and set window size to 4mb (max) */
 	orig_winctl = crtc_read(REG_CRTCX_WINCTL);
 	val = orig_winctl & ~CRTCX_WINCTL_SZMASK;
 	crtc_write(REG_CRTCX_WINCTL, val | CRTCX_WINCTL_LADDR_EN | CRTCX_WINCTL_4M);
-
-	printf("CR58: %02x\n", crtc_read(REG_CRTCX_WINCTL));
-	printf("CR59,5A: %02x%02x 0000\n", crtc_read(REG_CRTCX_WINPOS_H), crtc_read(REG_CRTCX_WINPOS_L));
-	printf("CRTC start addr: %02x%02x\n", crtc_read(REG_CRTC_STA_H), crtc_read(REG_CRTC_STA_L));
-	printf("CR69: %02x\n", crtc_read(0x69));
-	printf("CR31: %02x\n", crtc_read(0x31));
-	printf("CR51: %02x\n", crtc_read(0x51));
-
-	printf("\nCR67: %02x\n", crtc_read(0x67));
 
 	return (char*)mmio;
 }
@@ -129,10 +113,7 @@ void s3v_set_text(void)
 
 void s3v_fillrect(int x, int y, int w, int h, int color)
 {
-	printf("S3D cmdreg: %08x\n", MMREG_S3D_CMD);
-	printf("S3D fgcol: %08x\n", MMREG_S3D_FGCOL);
 	MMREG_S3D_FGCOL = color & 0xff;
-	printf("S3D fgcol: %08x\n", MMREG_S3D_FGCOL);
 	MMREG_S3D_RECTSZ = ((w - 1) << 16) | (h & 0x3ff);
 	MMREG_S3D_DSTPOS = (x << 16) | (y & 0x3ff);
 	MMREG_S3D_CMD = S3D_CMD_DRAW | S3D_CMD_PATMONO | S3D_CMD_RECT |

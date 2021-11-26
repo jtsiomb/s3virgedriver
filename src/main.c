@@ -44,6 +44,8 @@ int main(void)
 	}
 
 	if(s3v_init() == -1) {
+		stop_logger();
+		fprintf(stderr, "no compatible graphics card detected\n");
 		return 1;
 	}
 
@@ -52,7 +54,6 @@ int main(void)
 		fprintf(stderr, "failed to set video mode\n");
 		return 1;
 	}
-	printf("fb addr: %p\n", fb);
 
 	fbptr = fb;
 	for(i=0; i<480; i++) {
