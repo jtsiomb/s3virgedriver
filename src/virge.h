@@ -18,12 +18,20 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #ifndef VIRGE_H_
 #define VIRGE_H_
 
+#include "inttypes.h"
+
 int s3v_init(void);
 
 void *s3v_set_video(int xsz, int ysz, int bpp);
 void s3v_set_text(void);
 
 void s3v_fillrect(int x, int y, int w, int h, int color);
+
+void s3v_cursor_color(int fr, int fg, int fb, int br, int bg, int bb);
+void s3v_cursordef(int w, int h, void *img, void *mask, int hotx, int hoty);
+void s3v_cursordef_rgba(int w, int h, uint32_t *img, int hotx, int hoty);
+void s3v_showcursor(int show);
+void s3v_cursor(int x, int y);
 
 void s3v_extreg_unlock(void);
 int s3v_detect(void);

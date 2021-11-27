@@ -1,4 +1,4 @@
-obj = main.obj pci.obj virge.obj vbe.obj mem.obj logger.obj
+obj = main.obj pci.obj virge.obj vbe.obj mem.obj logger.obj mouse.obj
 bin = test.exe
 
 #opt = -otexan

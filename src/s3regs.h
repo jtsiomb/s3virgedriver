@@ -52,10 +52,23 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #define REG_CRTCX_REV		0x2f
 #define REG_CRTCX_CHIPID	0x30
 #define REG_CRTCX_MEMCFG	0x31
+#define REG_CRTCX_CFG1		0x36
 #define REG_CRTCX_UNLOCK1	0x38
 #define REG_CRTCX_UNLOCK2	0x39
 #define REG_CRTCX_SYSCONF	0x40
+#define REG_CRTCX_CURMODE	0x45
+#define REG_CRTCX_CURX_H	0x46
+#define REG_CRTCX_CURX_L	0x47
+#define REG_CRTCX_CURY_H	0x48
+#define REG_CRTCX_CURY_L	0x49
+#define REG_CRTCX_CURFG		0x4a
+#define REG_CRTCX_CURBG		0x4b
+#define REG_CRTCX_CURADDR_H	0x4c
+#define REG_CRTCX_CURADDR_L	0x4d
+#define REG_CRTCX_CURXOFFS	0x4e
+#define REG_CRTCX_CURYOFFS	0x4f
 #define REG_CRTCX_MEMCTL1	0x53
+#define REG_CRTCX_DACCTL	0x55
 #define REG_CRTCX_WINCTL	0x58
 #define REG_CRTCX_WINPOS_H	0x59
 #define REG_CRTCX_WINPOS_L	0x5a
@@ -64,7 +77,18 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #define CRTCX_MEMCFG_BASEOFFS_EN	0x01
 #define CRTCX_MEMCFG_ENHMAP			0x08
 
+#define CRTCX_CFG1_VLB				0x01
+#define CRTCX_CFG1_PCI				0x02
+#define CRTCX_CFG1_EDO1				0
+#define CRTCX_CFG1_EDO2				0x08
+#define CRTCX_CFG1_VBE				0x10
+#define CRTCX_CFG1_4MB				0
+#define CRTCX_CFG1_2MB				0x80
+
 #define CRTCX_SYSCONF_ENH_EN		0x01
+
+#define CRTCX_CURMODE_EN			0x01
+#define CRTCX_CURMODE_1280			0x10
 
 #define CRTCX_MEMCTL1_SWAP_BYTES	0x02
 #define CRTCX_MEMCTL1_SWAP_BIGEND	0x04
@@ -73,6 +97,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #define CRTCX_MEMCTL1_WIN_A8000		0
 #define CRTCX_MEMCTL1_WIN_B8000		0x20
 #define CRTCX_MEMCTL1_SWAP_NIBL		0x40
+
+#define CRTCX_DACCTL_CURX11		0x10
 
 #define CRTCX_WINCTL_SZMASK		0x03
 #define CRTCX_WINCTL_64K		0x00

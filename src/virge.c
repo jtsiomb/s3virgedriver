@@ -31,6 +31,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 static struct pci_device *pcidev;
 static volatile void *mmio;
+static uint32_t s3d_dfmt;
+static uint32_t vmemsize;
 
 static unsigned char orig_winctl, orig_memctl1, orig_memcfg;
 
@@ -45,7 +47,9 @@ int s3v_init(void)
 		return -1;
 	}
 
-	printf("Found S3 Virge (%x:%x.%x)\n", pcidev->bus, pcidev->dev, pcidev->func);
+	vmemsize = crtc_read(REG_CRTCX_CFG1) & CRTCX_CFG1_2MB ? 2 : 4;
+	printf("Found S3 Virge %uMB (%x:%x.%x)\n", vmemsize, pcidev->bus, pcidev->dev, pcidev->func);
+	vmemsize <<= 20;
 	return 0;
 }
 
@@ -95,6 +99,20 @@ void *s3v_set_video(int xsz, int ysz, int bpp)
 	val = orig_winctl & ~CRTCX_WINCTL_SZMASK;
 	crtc_write(REG_CRTCX_WINCTL, val | CRTCX_WINCTL_LADDR_EN | CRTCX_WINCTL_4M);
 
+	switch(bpp) {
+	case 8:
+		s3d_dfmt = S3D_CMD_DFMT8;
+		break;
+	case 15:
+	case 16:
+		s3d_dfmt = S3D_CMD_DFMT16;
+		break;
+
+	case 24:
+	case 32:
+		s3d_dfmt = S3D_CMD_DFMT24;
+	}
+
 	return (char*)mmio;
 }
 
@@ -113,11 +131,115 @@ void s3v_set_text(void)
 
 void s3v_fillrect(int x, int y, int w, int h, int color)
 {
-	MMREG_S3D_FGCOL = color & 0xff;
+	MMREG_S3D_FGCOL = color;
 	MMREG_S3D_RECTSZ = ((w - 1) << 16) | (h & 0x3ff);
 	MMREG_S3D_DSTPOS = (x << 16) | (y & 0x3ff);
 	MMREG_S3D_CMD = S3D_CMD_DRAW | S3D_CMD_PATMONO | S3D_CMD_RECT |
-		S3D_CMD_LR | S3D_CMD_TB | S3D_CMD_ROP(ROP_PAT);
+		s3d_dfmt | S3D_CMD_LR | S3D_CMD_TB | S3D_CMD_ROP(ROP_PAT);
+}
+
+void s3v_cursor_color(int fr, int fg, int fb, int br, int bg, int bb)
+{
+	crtc_read(REG_CRTCX_CURMODE);	/* reset color stack ptr */
+	crtc_write(REG_CRTCX_CURFG, fr);
+	crtc_write(REG_CRTCX_CURFG, fg);
+	crtc_write(REG_CRTCX_CURFG, fb);
+	crtc_read(REG_CRTCX_CURMODE);	/* reset color stack ptr */
+	crtc_write(REG_CRTCX_CURBG, br);
+	crtc_write(REG_CRTCX_CURBG, bg);
+	crtc_write(REG_CRTCX_CURBG, bb);
+}
+
+void s3v_cursordef(int w, int h, void *img, void *mask, int hotx, int hoty)
+{
+	int i, j;
+	uint32_t offs = vmemsize - 1024;
+	uint16_t *dest = (uint16_t*)((char*)mmio + offs);
+	uint16_t val, *iptr = img, *mptr = mask;
+
+	for(i=0; i<h; i++) {
+		for(j=0; j<4; j++) {
+			if(j < (w >> 4)) {
+				val = *mptr++;
+				*dest++ = (val >> 8) | (val << 8);
+				val = *iptr++;
+				*dest++ = (val >> 8) | (val << 8);
+			} else {
+				*dest++ = 0;
+				*dest++ = 0;
+			}
+		}
+	}
+	if(h < 64) memset(dest, 0, (64 - h) << 4);
+
+	offs >>= 10;
+	crtc_write(REG_CRTCX_CURADDR_H, offs >> 8);
+	crtc_write(REG_CRTCX_CURADDR_L, offs & 0xff);
+
+	crtc_write(REG_CRTCX_CURXOFFS, hotx);
+	crtc_write(REG_CRTCX_CURYOFFS, hoty);
+
+	crtc_wrmask(REG_CRTCX_DACCTL, CRTCX_DACCTL_CURX11, CRTCX_DACCTL_CURX11);
+}
+
+void s3v_cursordef_rgba(int w, int h, uint32_t *img, int hotx, int hoty)
+{
+	int i, j;
+	uint32_t offs = vmemsize - 1024;
+	uint16_t *dest = (uint16_t*)((char*)mmio + offs);
+	uint32_t pix, fgcol = 0, bgcol = 0;
+	uint16_t bits = 0, mask = 0;
+
+	for(i=0; i<h; i++) {
+		for(j=0; j<64; j++) {
+			pix = j < w ? *img++ : 0;
+			if(!(pix & 0xff000000)) {
+				bits <<= 1;
+				mask <<= 1;
+			} else {
+				if(bgcol == 0) {
+					bgcol = pix;
+				} else if(fgcol == 0) {
+					fgcol = pix;
+				}
+				bits = (bits << 1) | (pix == fgcol ? 1 : 0);
+				mask = (mask << 1) | 1;
+			}
+			if((j & 0xf) == 0xf) {
+				*dest++ = mask;
+				*dest++ = bits;
+			}
+		}
+	}
+	if(h < 64) memset(dest, 0, (64 - h) << 4);
+
+	offs >>= 10;
+	crtc_write(REG_CRTCX_CURADDR_H, offs >> 8);
+	crtc_write(REG_CRTCX_CURADDR_L, offs & 0xff);
+
+	crtc_write(REG_CRTCX_CURXOFFS, hotx);
+	crtc_write(REG_CRTCX_CURYOFFS, hoty);
+
+	s3v_cursor_color(fgcol >> 16, fgcol >> 8, fgcol, bgcol >> 16, bgcol >> 8, bgcol);
+
+	crtc_wrmask(REG_CRTCX_DACCTL, CRTCX_DACCTL_CURX11, CRTCX_DACCTL_CURX11);
+}
+
+void s3v_showcursor(int show)
+{
+	if(show) {
+		crtc_wrmask(REG_CRTCX_CURMODE, CRTCX_CURMODE_EN, CRTCX_CURMODE_EN);
+	} else {
+		crtc_write(REG_CRTCX_CURMODE, 0);
+	}
+}
+
+void s3v_cursor(int x, int y)
+{
+	crtc_write(REG_CRTCX_CURX_H, (x >> 8) & 7);
+	crtc_write(REG_CRTCX_CURX_L, x & 0xff);
+	crtc_write(REG_CRTCX_CURY_H, (y >> 8) & 7);
+	crtc_write(REG_CRTCX_CURY_L, y & 0xff);
 }
 
 void s3v_extreg_unlock(void)
