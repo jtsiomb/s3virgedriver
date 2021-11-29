@@ -8,7 +8,9 @@ drivers.
 
 Currently runs under DOS, builds with Watcom. Type `wmake` to build.
 
-Hardware docs: http://mutantstargoat.com/~nuclear/tmp/virge.pdf
+Hardware docs:
+  - S3 ViRGE: http://mutantstargoat.com/~nuclear/tmp/virge.pdf
+  - S3 Trio32/64: http://mutantstargoat.com/~nuclear/tmp/s3trio.pdf
 
 
 Copyright (C) 2021 John Tsiombikas <nuclear@member.fsf.org>
