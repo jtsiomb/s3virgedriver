@@ -16,23 +16,24 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include <stdio.h>
+#include <string.h>
 #include "virge.h"
 #include "s3regs.h"
 #include "pci.h"
 #include "vbe.h"
 #include "mem.h"
 
-#define PCI_VENDOR_S3		0x5333
-#define PCI_DEVICE_VIRGE	0x5631
-
 #define MMIO_SIZE	0x2000000
 
 #define S3D_BUSY	(!(MMREG_STAT & STAT_S3D_IDLE))
+
+static const char *devtype_name(uint32_t devtype);
 
 static struct pci_device *pcidev;
 static volatile void *mmio;
 static uint32_t s3d_dfmt;
 static uint32_t vmemsize;
+static uint32_t devtype;
 
 static unsigned char orig_winctl, orig_memctl1, orig_memcfg;
 
@@ -43,13 +44,25 @@ int s3v_init(void)
 		return 0;
 	}
 
-	if(!(pcidev = find_pci_dev(PCI_VENDOR_S3, PCI_DEVICE_VIRGE)) || !s3v_detect()) {
-		return -1;
+	if(!(pcidev = find_pci_dev(PCI_VENDOR_S3, PCI_DEVICE_VIRGE)) ||
+			!(devtype = s3v_detect())) {
+		if(!(pcidev = find_pci_dev(PCI_VENDOR_S3, PCI_DEVICE_TRIO)) ||
+				!(devtype = s3v_detect())) {
+			return -1;
+		}
 	}
 
 	vmemsize = crtc_read(REG_CRTCX_CFG1) & CRTCX_CFG1_2MB ? 2 : 4;
-	printf("Found S3 Virge %uMB (%x:%x.%x)\n", vmemsize, pcidev->bus, pcidev->dev, pcidev->func);
+	printf("Found S3 %s %uMB (%x:%x.%x)\n", devtype_name(devtype), vmemsize,
+			pcidev->bus, pcidev->dev, pcidev->func);
+	fflush(stdout);
 	vmemsize <<= 20;
+
+	if(devtype != DEVID_VIRGE) {
+		/* XXX */
+		fprintf(stderr, "Only Virge is currently supported\n");
+		return -1;
+	}
 	return 0;
 }
 
@@ -136,6 +149,11 @@ void s3v_fillrect(int x, int y, int w, int h, int color)
 	MMREG_S3D_DSTPOS = (x << 16) | (y & 0x3ff);
 	MMREG_S3D_CMD = S3D_CMD_DRAW | S3D_CMD_PATMONO | S3D_CMD_RECT |
 		s3d_dfmt | S3D_CMD_LR | S3D_CMD_TB | S3D_CMD_ROP(ROP_PAT);
+}
+
+void s3v_imgcopy(uint32_t dest, void *src, int x, int y, int xsz, int ysz, int pitch)
+{
+	/* TODO */
 }
 
 void s3v_cursor_color(int fr, int fg, int fb, int br, int bg, int bb)
@@ -254,17 +272,42 @@ void s3v_extreg_unlock(void)
 	outp(CRTC_DATA_PORT, cur | CRTCX_SYSCONF_ENH_EN);
 }
 
+static unsigned int supdev[] = {
+	DEVID_TRIO32,
+	DEVID_TRIO64,
+	DEVID_VIRGE
+};
+
 int s3v_detect(void)
 {
-	unsigned int devid, rev, chipid;
+	int i;
+	uint32_t devid, rev, chipid;
 	s3v_extreg_unlock();
 	devid = crtc_read(REG_CRTCX_DEVID_L);
-	devid |= (unsigned int)crtc_read(REG_CRTCX_DEVID_H) << 8;
+	devid |= (uint32_t)crtc_read(REG_CRTCX_DEVID_H) << 8;
 	rev = crtc_read(REG_CRTCX_REV);
 	chipid = crtc_read(REG_CRTCX_CHIPID);
 
 	printf("S3 dev %x rev %x, chip %x stepping %x\n", devid, rev, chipid & 0xf,
 			chipid >> 4);
 
-	return (devid & 0xff) == 0x31;
+	for(i=0; supdev[i]; i++) {
+		if(supdev[i] == devid) {
+			return devid;
+		}
+	}
+	return 0;
+}
+
+static const char *devtype_name(uint32_t devtype)
+{
+	switch(devtype) {
+	case DEVID_VIRGE:
+		return "Virge";
+	case DEVID_TRIO32:
+		return "Trio32";
+	case DEVID_TRIO64:
+		return "Trio64";
+	}
+	return "unknown";
 }

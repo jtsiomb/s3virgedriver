@@ -21,6 +21,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "pci.h"
 #include "virge.h"
 #include "logger.h"
+#include "mouse.h"
 
 #define BPP		16
 

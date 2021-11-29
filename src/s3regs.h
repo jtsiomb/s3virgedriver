@@ -21,6 +21,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <conio.h>		/* inp/outp */
 #include "inttypes.h"
 
+#define PCI_VENDOR_S3		0x5333
+#define PCI_DEVICE_VIRGE	0x5631
+#define PCI_DEVICE_TRIO		0x8811
+
+#define DEVID_TRIO32		0x8810
+#define DEVID_TRIO64		PCI_DEVICE_TRIO
+#define DEVID_VIRGE			PCI_DEVICE_VIRGE
+
 /* standard VGA ports */
 #define SC_ADDR_PORT	0x3c4
 #define SC_DATA_PORT	0x3c5
