@@ -25,15 +25,19 @@ int s3v_init(void);
 void *s3v_set_video(int xsz, int ysz, int bpp);
 void s3v_set_text(void);
 
+void s3v_cliprect(int x, int y, int w, int h);
 void s3v_fillrect(int x, int y, int w, int h, int color);
-
-void s3v_imgcopy(uint32_t dest, void *src, int x, int y, int xsz, int ysz, int pitch);
+void s3v_imgcopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, int pitch);
+void s3v_dmacopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, int pitch);
 
 void s3v_cursor_color(int fr, int fg, int fb, int br, int bg, int bb);
 void s3v_cursordef(int w, int h, void *img, void *mask, int hotx, int hoty);
 void s3v_cursordef_rgba(int w, int h, uint32_t *img, int hotx, int hoty);
 void s3v_showcursor(int show);
 void s3v_cursor(int x, int y);
+
+void s3v_cmdfifo_finish(void);
+void s3v_s3dfifo_finish(void);
 
 void s3v_extreg_unlock(void);
 int s3v_detect(void);

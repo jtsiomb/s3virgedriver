@@ -18,11 +18,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <conio.h>
 #include "pci.h"
 #include "virge.h"
 #include "logger.h"
 #include "mouse.h"
+#include "inttypes.h"
 
 #define BPP		16
 
@@ -45,11 +47,14 @@ static uint16_t curmask[] = {
 
 static int opt_width = 640;
 static int opt_height = 480;
-static int opt_vsync = 1;
-static int opt_dma = 0;
+
+enum {OPT_VSYNC = 1, OPT_BLIT = 2, OPT_DMA = 4, OPT_BENCH = 8};
+static unsigned int opt;
 
 static int mx, my;
+static int dirty = 1;
 
+static uint16_t *backbuf;
 
 int main(int argc, char **argv)
 {
@@ -59,6 +64,8 @@ int main(int argc, char **argv)
 #else
 	uint16_t *fbptr;
 #endif
+	time_t t0, tsec;
+	unsigned long nframes = 0;
 
 	if(parse_args(argc, argv) == -1) {
 		return 1;
@@ -95,29 +102,57 @@ int main(int argc, char **argv)
 		s3v_showcursor(1);
 	}
 
+	backbuf = malloc(opt_width * opt_height * (BPP / 8));
+	fbptr = backbuf;
+	for(i=0; i<opt_height; i++) {
+		for(j=0; j<opt_width; j++) {
+			int chess = ((i >> 5) & 1) == ((j >> 5) & 1);
+#if BPP == 8
+			*fbptr++ = chess ? 3 : 4;
+#else
+			*fbptr++ = chess ? 0xf800 : 0x001f;
+#endif
+		}
+	}
+
+	stop_logger();	/* avoid fs corruption if we hang after this point */
+
+	t0 = time(0);
 	for(;;) {
-		if(kbhit() && getch() == 27) {
-			break;
+		if(kbhit()) {
+			switch(getch()) {
+			case 27:
+				goto end;
+			case ' ':
+				if(!(opt & OPT_BENCH)) {
+					opt |= OPT_BENCH;
+					t0 = time(0);
+					dirty = 1;
+				}
+				break;
+			}
 		}
 		if(have_mouse) {
 			read_mouse(&mx, &my);
 		}
 
-		if(opt_vsync) {
+		if(opt & OPT_VSYNC) {
 			wait_vsync();
 		}
 		s3v_cursor(mx, my);
 
-		fbptr = fb;
-		for(i=0; i<opt_height; i++) {
-			for(j=0; j<opt_width; j++) {
-				int chess = ((i >> 5) & 1) == ((j >> 5) & 1);
-#if BPP == 8
-				*fbptr++ = chess ? 3 : 4;
-#else
-				*fbptr++ = chess ? 0xf800 : 0x001f;
-#endif
+		if(!dirty) continue;
+		if(!(opt & OPT_BENCH)) dirty = 0;
+
+		if(opt & OPT_BLIT) {
+			if(opt & OPT_DMA) {
+				s3v_dmacopy(0, 0, backbuf, 0, 0, opt_width, opt_height, opt_width * BPP >> 3);
+			} else {
+				s3v_imgcopy(0, 0, backbuf, 0, 0, opt_width, opt_height, opt_width * BPP >> 3);
 			}
+		} else {
+			s3v_s3dfifo_finish();
+			memcpy(fb, backbuf, opt_width * opt_height * BPP >> 3);
 		}
 
 #if BPP == 8
@@ -125,10 +160,17 @@ int main(int argc, char **argv)
 #else
 		s3v_fillrect(opt_width >> 4, opt_height >> 3, opt_width >> 1, opt_height >> 1, 0x0700);
 #endif
+		nframes++;
 	}
+end:
+	tsec = time(0) - t0;
 
 	stop_logger();
 	s3v_set_text();
+
+	if(opt & OPT_BENCH) {
+		printf("framerate: %.2f fps\n", (float)nframes / (float)tsec);
+	}
 	return 0;
 }
 
@@ -148,7 +190,9 @@ static const char *usage_fmt = "Usage: %s [opt]\n"
 	"Options:\n"
 	" -s,-size <WxH>    select video resolution\n"
 	" -vsync/-novsync   enable/disable vsync\n"
-	" -dma/-nodma       enable/disable DMA image copies\n"
+	" -cpublit			copy frame with memcpy\n"
+	" -pioblit			copy frame with PIO blit\n"
+	" -dmablit       	copy frame with DMA blit\n"
 	" -h,-help          print usage and exit\n";
 
 int parse_args(int argc, char **argv)
@@ -163,13 +207,16 @@ int parse_args(int argc, char **argv)
 					return -1;
 				}
 			} else if(strcmp(argv[i], "-vsync") == 0) {
-				opt_vsync = 1;
+				opt |= OPT_VSYNC;
 			} else if(strcmp(argv[i], "-novsync") == 0) {
-				opt_vsync = 0;
-			} else if(strcmp(argv[i], "-dma") == 0) {
-				opt_dma = 1;
-			} else if(strcmp(argv[i], "-nodma") == 0) {
-				opt_dma = 0;
+				opt &= ~OPT_VSYNC;
+			} else if(strcmp(argv[i], "-cpublit") == 0) {
+				opt &= ~(OPT_BLIT | OPT_DMA);
+			} else if(strcmp(argv[i], "-pioblit") == 0) {
+				opt |= OPT_BLIT;
+				opt &= ~OPT_DMA;
+			} else if(strcmp(argv[i], "-dmablit") == 0) {
+				opt |= OPT_BLIT | OPT_DMA;
 			} else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "-help") == 0) {
 				printf(usage_fmt, argv[0]);
 				exit(0);

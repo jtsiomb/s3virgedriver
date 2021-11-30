@@ -1,7 +1,7 @@
 obj = main.obj pci.obj virge.obj vbe.obj mem.obj logger.obj mouse.obj
 bin = test.exe
 
-#opt = -otexan
+opt = -otexan
 dbg = -d3
 
 CC = wcc386
@@ -10,7 +10,7 @@ CFLAGS = $(dbg) $(opt) $(def) -zq -bt=dos
 
 $(bin): $(obj)
 	%write objects.lnk $(obj)
-	$(LD) debug all name $@ system dos4g file { @objects } $(LDFLAGS)
+	$(LD) debug all option map name $@ system dos4g file { @objects } $(LDFLAGS)
 
 .c: src
 .asm: src

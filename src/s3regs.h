@@ -126,6 +126,10 @@ uint32_t s3v_mmio_vaddr;
 
 #define MMREG_STAT			MMIO_REG(0x8504)
 #define MMREG_ADVFN			MMIO_REG(0x850c)
+#define MMREG_CDMA_BUF		MMIO_REG(0x8590)
+#define MMREG_CDMA_WR		MMIO_REG(0x8594)
+#define MMREG_CDMA_RD		MMIO_REG(0x8598)
+#define MMREG_CDMA			MMIO_REG(0x859c)
 
 #define STAT_VSYNC			0x0001
 #define STAT_FIFO_OVF		0x0004
@@ -140,9 +144,22 @@ uint32_t s3v_mmio_vaddr;
 #define ADVFN_ENHFC_EN		0x0001
 #define ADVFN_RST_DMA		0x0002
 #define ADVFN_LADDR_EN		0x0010
-#define ADVFN_FIFO_STAT(rval)	(((rval) >> 6) & 0xf)
+#define ADVFN_FIFO_MASK		0x03c0
+#define ADVFN_FIFO_FREE(rval)	(((rval) >> 6) & 0xf)
+
+#define CDMA_BUF_64K		0x00000002
+
+#define CDMA_WR_UPD			0x00010000
+
+#define CDMA_EN				0x00000001
 
 /* S3D 2D registers */
+#define MMREG_S3D_IMG		MMIO_REG(0x4)
+#define MMREG_S3D_SRCBASE	MMIO_REG(0xa4d4)
+#define MMREG_S3D_DSTBASE	MMIO_REG(0xa4d8)
+#define MMREG_S3D_XCLIP		MMIO_REG(0xa4dc)
+#define MMREG_S3D_YCLIP		MMIO_REG(0xa4e0)
+#define MMREG_S3D_STRIDE	MMIO_REG(0xa4e4)
 #define MMREG_S3D_FGCOL		MMIO_REG(0xa4f4)
 #define MMREG_S3D_CMD		MMIO_REG(0xa500)
 #define MMREG_S3D_RECTSZ	MMIO_REG(0xa504)
@@ -178,6 +195,7 @@ uint32_t s3v_mmio_vaddr;
 
 #define ROP_ZERO		0
 #define ROP_DST			0xaa
+#define ROP_SRC			0xcc
 #define ROP_PAT			0xf0
 #define ROP_ONE			0xff
 

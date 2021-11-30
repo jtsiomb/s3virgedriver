@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 #include "virge.h"
 #include "s3regs.h"
 #include "pci.h"
@@ -32,10 +33,19 @@ static const char *devtype_name(uint32_t devtype);
 static struct pci_device *pcidev;
 static volatile void *mmio;
 static uint32_t s3d_dfmt;
+static int pixsz;
 static uint32_t vmemsize;
 static uint32_t devtype;
 
 static unsigned char orig_winctl, orig_memctl1, orig_memcfg;
+
+#define RBUF_SIZE	4096
+#define RBUF_DWSIZE	(RBUF_SIZE >> 2)
+static unsigned char rbuf_mem[RBUF_SIZE << 1];	/* 8192 to ensure 4k alignment */
+static uint32_t *rbuf;
+static int rbuf_rd, rbuf_wr;	/* dword index */
+
+#define RBUF_NFREE (((rbuf_rd + RBUF_DWSIZE) - rbuf_wr) & (RBUF_DWSIZE - 1))
 
 int s3v_init(void)
 {
@@ -63,6 +73,8 @@ int s3v_init(void)
 		fprintf(stderr, "Only Virge is currently supported\n");
 		return -1;
 	}
+
+	rbuf = (uint32_t*)((intptr_t)rbuf_mem & ~(RBUF_SIZE - 1));
 	return 0;
 }
 
@@ -114,17 +126,33 @@ void *s3v_set_video(int xsz, int ysz, int bpp)
 
 	switch(bpp) {
 	case 8:
+		pixsz = 1;
 		s3d_dfmt = S3D_CMD_DFMT8;
 		break;
 	case 15:
 	case 16:
+		pixsz = 2;
 		s3d_dfmt = S3D_CMD_DFMT16;
 		break;
 
 	case 24:
 	case 32:
+		pixsz = bpp == 24 ? 3 : 4;
 		s3d_dfmt = S3D_CMD_DFMT24;
 	}
+
+	s3v_cliprect(0, 0, xsz, ysz);
+
+	MMREG_S3D_DSTBASE = 0;	/* vmem dest base address for blits/fills */
+	MMREG_S3D_STRIDE = ((xsz * pixsz) & 0xfff8) | (((xsz * pixsz) & 0xfff8) << 16);
+
+	/* setup DMA buffer */
+	rbuf_wr = rbuf_rd = 0;
+	assert(RBUF_SIZE == 4096 || RBUF_SIZE == 65536);
+	MMREG_CDMA_BUF = (intptr_t)rbuf | (RBUF_SIZE == 65536 ? CDMA_BUF_64K : 0);
+	MMREG_CDMA_WR = 0;
+	MMREG_CDMA_RD = 0;
+	MMREG_CDMA = CDMA_EN;
 
 	return (char*)mmio;
 }
@@ -132,6 +160,8 @@ void *s3v_set_video(int xsz, int ysz, int bpp)
 void s3v_set_text(void)
 {
 	if(mmio) {
+		MMREG_CDMA = 0;
+
 		crtc_write(REG_CRTCX_MEMCTL1, orig_memctl1);
 		crtc_write(REG_CRTCX_MEMCFG, orig_memcfg);
 		crtc_write(REG_CRTCX_WINCTL, orig_winctl);
@@ -140,6 +170,14 @@ void s3v_set_text(void)
 		mmio = 0;
 	}
 	vbe_set_mode(3);
+}
+
+void s3v_cliprect(int x, int y, int w, int h)
+{
+	x &= 0x3ff;
+	y &= 0x3ff;
+	MMREG_S3D_XCLIP = (x << 16) | ((x + w - 1) & 0x3ff);
+	MMREG_S3D_YCLIP = (y << 16) | ((y + h - 1) & 0x3ff);
 }
 
 void s3v_fillrect(int x, int y, int w, int h, int color)
@@ -151,9 +189,85 @@ void s3v_fillrect(int x, int y, int w, int h, int color)
 		s3d_dfmt | S3D_CMD_LR | S3D_CMD_TB | S3D_CMD_ROP(ROP_PAT);
 }
 
-void s3v_imgcopy(uint32_t dest, void *src, int x, int y, int xsz, int ysz, int pitch)
+void s3v_imgcopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, int pitch)
 {
-	/* TODO */
+	int i, j, rem, scandw = (xsz * pixsz) >> 2;
+	uint32_t *ptr = (uint32_t*)((char*)src + y * pitch + x * pixsz);
+
+	/* wait for the command fifo to empty, before starting image transfers */
+	s3v_cmdfifo_finish();
+
+	MMREG_S3D_RECTSZ = ((xsz - 1) << 16) | (ysz & 0x3ff);
+	MMREG_S3D_DSTPOS = (dstx << 16) | (dsty & 0x3ff);
+	MMREG_S3D_CMD = S3D_CMD_DRAW | S3D_CMD_BLIT | S3D_CMD_SRCCPU | s3d_dfmt |
+		S3D_CMD_LR | S3D_CMD_TB | S3D_CMD_CLIP | S3D_CMD_IALIGN_WORD |
+		S3D_CMD_ROP(ROP_SRC);
+
+	for(i=0; i<ysz; i++) {
+		for(j=0; j<scandw; j++) {
+			MMREG_S3D_IMG = *ptr++;
+		}
+		rem = (pitch >> 2) - scandw;
+		if(rem > 0) {
+			ptr += rem;
+		}
+	}
+}
+
+#define DMAHDR_IMGDATA		0x80000000
+
+void s3v_dmacopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, int pitch)
+{
+	int i, j, sz, dmasz, dwcount, rem, scandw = (xsz * pixsz) >> 2;
+	uint32_t *ptr = (uint32_t*)((char*)src + y * pitch + x * pixsz);
+	uint32_t *cmdp = rbuf + rbuf_wr;
+	int nfree;
+
+	/* wait for the command fifo to empty, before starting image transfers */
+	s3v_cmdfifo_finish();
+
+	MMREG_S3D_RECTSZ = ((xsz - 1) << 16) | (ysz & 0x3ff);
+	MMREG_S3D_DSTPOS = (dstx << 16) | (dsty & 0x3ff);
+	MMREG_S3D_CMD = S3D_CMD_DRAW | S3D_CMD_BLIT | S3D_CMD_SRCCPU | s3d_dfmt |
+		S3D_CMD_LR | S3D_CMD_TB | S3D_CMD_CLIP | S3D_CMD_IALIGN_WORD |
+		S3D_CMD_ROP(ROP_SRC);
+
+	dwcount = scandw * ysz;
+
+	for(i=0; i<ysz; i++) {
+		rbuf_rd = MMREG_CDMA_RD >> 2;
+		if(i == 0 || RBUF_NFREE < scandw + 1) {
+			MMREG_CDMA_WR = (rbuf_wr << 2) | CDMA_WR_UPD;	/* trigger DMA */
+			do {
+				rbuf_rd = MMREG_CDMA_RD >> 2;
+			} while((nfree = RBUF_NFREE) < scandw + 1);
+
+			dmasz = dwcount < nfree ? dwcount : nfree;
+			rbuf[rbuf_wr] = dmasz | DMAHDR_IMGDATA;
+			rbuf_wr = (rbuf_wr + 1) & (RBUF_DWSIZE - 1);
+		}
+
+		if((sz = RBUF_DWSIZE - rbuf_wr) < dmasz) {
+			memcpy(rbuf + rbuf_wr, ptr, sz << 2);
+			ptr += sz;
+			sz = dwcount - sz;
+			memcpy(rbuf, ptr, sz << 2);
+			ptr += sz;
+			rbuf_wr += sz;
+		} else {
+			memcpy(rbuf + rbuf_wr, ptr, dmasz << 2);
+			ptr += dmasz;
+			rbuf_wr += dmasz;
+		}
+		dwcount -= dmasz;
+
+		rem = (pitch >> 2) - scandw;
+		if(rem > 0) {
+			ptr += rem;
+		}
+	}
+
+	MMREG_CDMA_WR = (rbuf_wr << 2) | CDMA_WR_UPD;	/* trigger DMA */
 }
 
 void s3v_cursor_color(int fr, int fg, int fb, int br, int bg, int bb)
@@ -270,6 +384,16 @@ void s3v_extreg_unlock(void)
 	/* enable access to enhanced interface */
 	cur = crtc_read(REG_CRTCX_SYSCONF);
 	outp(CRTC_DATA_PORT, cur | CRTCX_SYSCONF_ENH_EN);
+}
+
+void s3v_cmdfifo_finish(void)
+{
+	while(ADVFN_FIFO_FREE(MMREG_ADVFN) != 8);
+}
+
+void s3v_s3dfifo_finish(void)
+{
+	while(STAT_S3DFIFO_FREE(MMREG_STAT) != 16);
 }
 
 static unsigned int supdev[] = {
