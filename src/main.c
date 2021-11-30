@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <conio.h>
 #include "pci.h"
 #include "virge.h"
@@ -24,6 +25,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "mouse.h"
 
 #define BPP		16
+
+void wait_vsync(void);
+int parse_args(int argc, char **argv);
 
 static void *fb;
 static int have_mouse;
@@ -39,9 +43,15 @@ static uint16_t curmask[] = {
 	0xffc0, 0xffc0, 0xfe00, 0xef00, 0xcf00, 0x0780, 0x0780, 0x0300
 };
 
-void wait_vsync(void);
+static int opt_width = 640;
+static int opt_height = 480;
+static int opt_vsync = 1;
+static int opt_dma = 0;
 
-int main(void)
+static int mx, my;
+
+
+int main(int argc, char **argv)
 {
 	int i, j;
 #if BPP == 8
@@ -50,12 +60,14 @@ int main(void)
 	uint16_t *fbptr;
 #endif
 
+	if(parse_args(argc, argv) == -1) {
+		return 1;
+	}
+
 	init_logger("virge.log");
 
 	if(init_pci() == -1) {
-		stop_logger();
 		fprintf(stderr, "failed to access the PCI bus\n");
-		return 1;
 	}
 
 	if(s3v_init() == -1) {
@@ -64,7 +76,7 @@ int main(void)
 		return 1;
 	}
 
-	if(!(fb = s3v_set_video(640, 480, BPP))) {
+	if(!(fb = s3v_set_video(opt_width, opt_height, BPP))) {
 		stop_logger();
 		fprintf(stderr, "failed to set video mode\n");
 		return 1;
@@ -72,27 +84,10 @@ int main(void)
 
 	if(reset_mouse() != -1) {
 		have_mouse = 1;
-		set_mouse_xrange(0, 640);
-		set_mouse_yrange(0, 480);
+		set_mouse_xrange(0, opt_width);
+		set_mouse_yrange(0, opt_height);
 	}
 
-	fbptr = fb;
-	for(i=0; i<480; i++) {
-		for(j=0; j<640; j++) {
-			int chess = ((i >> 5) & 1) == ((j >> 5) & 1);
-#if BPP == 8
-			*fbptr++ = chess ? 3 : 4;
-#else
-			*fbptr++ = chess ? 0xf800 : 0x001f;
-#endif
-		}
-	}
-
-#if BPP == 8
-	s3v_fillrect(50, 50, 320, 240, 6);
-#else
-	s3v_fillrect(50, 50, 320, 240, 0x0700);
-#endif
 
 	if(have_mouse) {
 		s3v_cursor_color(0, 0, 0, 0xff, 0xff, 0xff);
@@ -104,14 +99,32 @@ int main(void)
 		if(kbhit() && getch() == 27) {
 			break;
 		}
-
-		wait_vsync();
-
 		if(have_mouse) {
-			int mx, my;
 			read_mouse(&mx, &my);
-			s3v_cursor(mx, my);
 		}
+
+		if(opt_vsync) {
+			wait_vsync();
+		}
+		s3v_cursor(mx, my);
+
+		fbptr = fb;
+		for(i=0; i<opt_height; i++) {
+			for(j=0; j<opt_width; j++) {
+				int chess = ((i >> 5) & 1) == ((j >> 5) & 1);
+#if BPP == 8
+				*fbptr++ = chess ? 3 : 4;
+#else
+				*fbptr++ = chess ? 0xf800 : 0x001f;
+#endif
+			}
+		}
+
+#if BPP == 8
+		s3v_fillrect(opt_width >> 4, opt_height >> 3, opt_width >> 1, opt_height >> 1, 6);
+#else
+		s3v_fillrect(opt_width >> 4, opt_height >> 3, opt_width >> 1, opt_height >> 1, 0x0700);
+#endif
 	}
 
 	stop_logger();
@@ -130,3 +143,47 @@ int main(void)
 	"and al, 0x8" \
 	"jz l2" \
 	modify[al dx];
+
+static const char *usage_fmt = "Usage: %s [opt]\n"
+	"Options:\n"
+	" -s,-size <WxH>    select video resolution\n"
+	" -vsync/-novsync   enable/disable vsync\n"
+	" -dma/-nodma       enable/disable DMA image copies\n"
+	" -h,-help          print usage and exit\n";
+
+int parse_args(int argc, char **argv)
+{
+	int i;
+
+	for(i=1; i<argc; i++) {
+		if(argv[i][0] == '-') {
+			if(strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "-size") == 0) {
+				if(!argv[++i] || sscanf(argv[i], "%dx%d", &opt_width, &opt_height) != 2) {
+					fprintf(stderr, "%s should be followed by a resoltion (WxH)\n", argv[i - 1]);
+					return -1;
+				}
+			} else if(strcmp(argv[i], "-vsync") == 0) {
+				opt_vsync = 1;
+			} else if(strcmp(argv[i], "-novsync") == 0) {
+				opt_vsync = 0;
+			} else if(strcmp(argv[i], "-dma") == 0) {
+				opt_dma = 1;
+			} else if(strcmp(argv[i], "-nodma") == 0) {
+				opt_dma = 0;
+			} else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "-help") == 0) {
+				printf(usage_fmt, argv[0]);
+				exit(0);
+			} else {
+				fprintf(stderr, "invalid option: %s\n", argv[i]);
+				fprintf(stderr, usage_fmt, argv[0]);
+				return -1;
+			}
+		} else {
+			fprintf(stderr, "unexpected argument: %s\n", argv[i]);
+			fprintf(stderr, usage_fmt, argv[0]);
+			return -1;
+		}
+	}
+
+	return 0;
+}
