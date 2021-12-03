@@ -1,12 +1,13 @@
 obj = main.obj pci.obj virge.obj vbe.obj mem.obj logger.obj mouse.obj
 bin = test.exe
 
-opt = -otexan
+#opt = -otexan
+warn = -w=3
 dbg = -d3
 
 CC = wcc386
 LD = wlink
-CFLAGS = $(dbg) $(opt) $(def) -zq -bt=dos
+CFLAGS = $(warn) $(dbg) $(opt) $(def) -zq -bt=dos
 
 $(bin): $(obj)
 	%write objects.lnk $(obj)

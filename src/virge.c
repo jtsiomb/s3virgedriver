@@ -23,6 +23,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "pci.h"
 #include "vbe.h"
 #include "mem.h"
+#include "logger.h"
 
 #define MMIO_SIZE	0x2000000
 
@@ -39,9 +40,9 @@ static uint32_t devtype;
 
 static unsigned char orig_winctl, orig_memctl1, orig_memcfg;
 
-#define RBUF_SIZE	4096
+#define RBUF_SIZE	65536
 #define RBUF_DWSIZE	(RBUF_SIZE >> 2)
-static unsigned char rbuf_mem[RBUF_SIZE << 1];	/* 8192 to ensure 4k alignment */
+static unsigned char rbuf_mem[RBUF_SIZE << 1];	/* double to ensure native alignment */
 static uint32_t *rbuf;
 static int rbuf_rd, rbuf_wr;	/* dword index */
 
@@ -50,7 +51,7 @@ static int rbuf_rd, rbuf_wr;	/* dword index */
 int s3v_init(void)
 {
 	if(pcidev) {
-		fprintf(stderr, "S3 Virge driver already initialized\n");
+		logmsg("S3 Virge driver already initialized\n");
 		return 0;
 	}
 
@@ -63,18 +64,19 @@ int s3v_init(void)
 	}
 
 	vmemsize = crtc_read(REG_CRTCX_CFG1) & CRTCX_CFG1_2MB ? 2 : 4;
-	printf("Found S3 %s %uMB (%x:%x.%x)\n", devtype_name(devtype), vmemsize,
+	logmsg("Found S3 %s %uMB (%x:%x.%x)\n", devtype_name(devtype), vmemsize,
 			pcidev->bus, pcidev->dev, pcidev->func);
-	fflush(stdout);
 	vmemsize <<= 20;
 
 	if(devtype != DEVID_VIRGE) {
 		/* XXX */
-		fprintf(stderr, "Only Virge is currently supported\n");
+		logmsg("Only Virge is currently supported\n");
 		return -1;
 	}
 
-	rbuf = (uint32_t*)((intptr_t)rbuf_mem & ~(RBUF_SIZE - 1));
+	rbuf = (uint32_t*)((intptr_t)(rbuf_mem + RBUF_SIZE - 1) & ~(RBUF_SIZE - 1));
+	logmsg("DMA buffer %p-%p (alloc: %p-%p)\n", rbuf, (char*)rbuf + RBUF_SIZE,
+			rbuf_mem, (char*)rbuf_mem + sizeof rbuf_mem);
 	return 0;
 }
 
@@ -84,7 +86,7 @@ void *s3v_set_video(int xsz, int ysz, int bpp)
 	uint32_t iobase;
 
 	if(!(mode = vbe_find_mode(xsz, ysz, bpp))) {
-		fprintf(stderr, "failed to find suitable video mode (%dx%d %d bpp)\n", xsz, ysz, bpp);
+		logmsg("failed to find suitable video mode (%dx%d %d bpp)\n", xsz, ysz, bpp);
 		return 0;
 	}
 	vbe_set_mode(mode);
@@ -99,10 +101,10 @@ void *s3v_set_video(int xsz, int ysz, int bpp)
 
 	/* map 32mb from iobase */
 	if(!(mmio = mem_map(iobase, MMIO_SIZE))) {
-		fprintf(stderr, "failed to map MMIO range (32mb from %08x)\n", iobase);
+		logmsg("failed to map MMIO range (32mb from %08x)\n", iobase);
 		return 0;
 	}
-	printf("Mapped MMIO %08x-%08x (32mb) to virtual %p\n", iobase, iobase + MMIO_SIZE - 1, mmio);
+	logmsg("Mapped MMIO %08x-%08x (32mb) to virtual %p\n", iobase, iobase + MMIO_SIZE - 1, mmio);
 	s3v_mmio_vaddr = (uint32_t)mmio;
 
 	/* enable new-style MMIO */
@@ -204,6 +206,10 @@ void s3v_imgcopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, 
 		S3D_CMD_ROP(ROP_SRC);
 
 	for(i=0; i<ysz; i++) {
+		/*
+		memcpy(MMREG_S3D_IMG, ptr, xsz * pixsz);
+		ptr += pitch >> 2;
+		*/
 		for(j=0; j<scandw; j++) {
 			MMREG_S3D_IMG = *ptr++;
 		}
@@ -235,11 +241,23 @@ void s3v_dmacopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, 
 	dwcount = scandw * ysz;
 
 	for(i=0; i<ysz; i++) {
-		rbuf_rd = MMREG_CDMA_RD >> 2;
+		rbuf_rd = (MMREG_CDMA_RD & 0xfffc) >> 2;
+		rbuf[rbuf_wr] = scandw | DMAHDR_IMGDATA;
+		rbuf_wr = (rbuf_wr + 1) & (RBUF_DWSIZE - 1);
+		memcpy(rbuf + rbuf_wr, ptr, scandw << 2);
+		rbuf_wr += scandw;
+		MMREG_CDMA_WR = (rbuf_wr << 2) | CDMA_WR_UPD;
+
+		ptr += pitch >> 2;
+	}
+
+#if 0
+	for(i=0; i<ysz; i++) {
+		rbuf_rd = (MMREG_CDMA_RD & 0xfffc) >> 2;
 		if(i == 0 || RBUF_NFREE < scandw + 1) {
 			MMREG_CDMA_WR = (rbuf_wr << 2) | CDMA_WR_UPD;	/* trigger DMA */
 			do {
-				rbuf_rd = MMREG_CDMA_RD >> 2;
+				rbuf_rd = (MMREG_CDMA_RD & 0xfffc) >> 2;
 			} while((nfree = RBUF_NFREE) < scandw + 1);
 
 			dmasz = dwcount < nfree ? dwcount : nfree;
@@ -268,6 +286,7 @@ void s3v_dmacopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, 
 	}
 
 	MMREG_CDMA_WR = (rbuf_wr << 2) | CDMA_WR_UPD;	/* trigger DMA */
+#endif
 }
 
 void s3v_cursor_color(int fr, int fg, int fb, int br, int bg, int bb)
@@ -412,7 +431,7 @@ int s3v_detect(void)
 	rev = crtc_read(REG_CRTCX_REV);
 	chipid = crtc_read(REG_CRTCX_CHIPID);
 
-	printf("S3 dev %x rev %x, chip %x stepping %x\n", devid, rev, chipid & 0xf,
+	logmsg("S3 dev %x rev %x, chip %x stepping %x\n", devid, rev, chipid & 0xf,
 			chipid >> 4);
 
 	for(i=0; supdev[i]; i++) {

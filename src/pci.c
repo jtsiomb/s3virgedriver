@@ -22,6 +22,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <i86.h>
 #include "inttypes.h"
 #include "pci.h"
+#include "logger.h"
 
 #define CONFIG_ADDR_PORT	0xcf8
 #define CONFIG_DATA_PORT	0xcfc
@@ -68,26 +69,26 @@ int init_pci(void)
 
 	/* PCI BIOS present if CF=0, AH=0, and EDX has the "PCI " sig FOURCC */
 	if(regs.x.cflag || (regs.x.eax & 0xff00) || regs.x.edx != PCI_SIG) {
-		printf("No PCI BIOS present\n");
+		logmsg("No PCI BIOS present\n");
 		return -1;
 	}
 
-	printf("PCI BIOS v%x.%x found\n", (regs.x.ebx & 0xff00) >> 8, regs.x.ebx & 0xff);
+	logmsg("PCI BIOS v%x.%x found\n", (regs.x.ebx & 0xff00) >> 8, regs.x.ebx & 0xff);
 	if(regs.x.eax & 1) {
 		cfg_read32 = cfg_read32_m1;
 	} else {
 		if(!(regs.x.eax & 2)) {
-			printf("Failed to find supported PCI mess mechanism\n");
+			logmsg("Failed to find supported PCI mess mechanism\n");
 			return -1;
 		}
-		printf("PCI mess mechanism #1 unsupported, falling back to mechanism #2\n");
+		logmsg("PCI mess mechanism #1 unsupported, falling back to mechanism #2\n");
 		cfg_read32 = cfg_read32_m2;
 	}
 
 	for(i=0; i<256; i++) {
 		count += enum_bus(i);
 	}
-	printf("found %d PCI devices\n\n", count);
+	logmsg("found %d PCI devices\n\n", count);
 	return 0;
 }
 
@@ -155,10 +156,10 @@ static int read_dev_info(struct pci_config_data *res, int bus, int dev, int func
 
 static void print_dev_info(struct pci_config_data *info, int bus, int dev, int func)
 {
-	printf("- (%d:%d,%d) Device %04x:%04x: ", bus, dev, func, info->vendor, info->device);
-	printf("\"%s\" (%d) - %s-func\n", class_str(info->class), info->class,
+	logmsg("- (%d:%d,%d) Device %04x:%04x: ", bus, dev, func, info->vendor, info->device);
+	logmsg("\"%s\" (%d) - %s-func\n", class_str(info->class), info->class,
 			info->hdr_type & TYPE_MULTIFUNC ? "multi" : "single");
-	printf("    subclass: \"%s\" (%d), iface: %d\n", subclass_str(info->class, info->subclass),
+	logmsg("    subclass: \"%s\" (%d), iface: %d\n", subclass_str(info->class, info->subclass),
 			info->subclass, info->iface);
 }
 
@@ -173,7 +174,7 @@ static uint32_t cfg_read32_m1(int bus, int dev, int func, int reg)
 
 static uint32_t cfg_read32_m2(int bus, int dev, int func, int reg)
 {
-	fprintf(stderr, "BUG: PCI mess mechanism #2 not implemented yet!");
+	logmsg("BUG: PCI mess mechanism #2 not implemented yet!");
 	abort();
 	return 0;
 }
@@ -398,7 +399,7 @@ static void add_device(struct pci_device *dev)
 		int newsz = max_pcidevs ? max_pcidevs << 1 : 8;
 
 		if(!(newarr = realloc(pcidev, newsz * sizeof *pcidev))) {
-			fprintf(stderr, "failed to resize PCI device array (%d)\n", newsz);
+			logmsg("failed to resize PCI device array (%d)\n", newsz);
 			return;
 		}
 		pcidev = newarr;

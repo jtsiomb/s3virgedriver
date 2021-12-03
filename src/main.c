@@ -47,6 +47,7 @@ static uint16_t curmask[] = {
 
 static int opt_width = 640;
 static int opt_height = 480;
+static const char *opt_logfile;
 
 enum {OPT_VSYNC = 1, OPT_BLIT = 2, OPT_DMA = 4, OPT_BENCH = 8};
 static unsigned int opt;
@@ -67,14 +68,17 @@ int main(int argc, char **argv)
 	time_t t0, tsec;
 	unsigned long nframes = 0;
 
+	opt_logfile = getenv("LOGFILE");
 	if(parse_args(argc, argv) == -1) {
 		return 1;
 	}
 
-	init_logger("virge.log");
+	if(init_logger(opt_logfile ? opt_logfile : "virge.log") == -1) {
+		return 1;
+	}
 
 	if(init_pci() == -1) {
-		fprintf(stderr, "failed to access the PCI bus\n");
+		logmsg("failed to access the PCI bus\n");
 	}
 
 	if(s3v_init() == -1) {
@@ -115,8 +119,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	stop_logger();	/* avoid fs corruption if we hang after this point */
-
 	t0 = time(0);
 	for(;;) {
 		if(kbhit()) {
@@ -146,20 +148,23 @@ int main(int argc, char **argv)
 
 		if(opt & OPT_BLIT) {
 			if(opt & OPT_DMA) {
-				s3v_dmacopy(0, 0, backbuf, 0, 0, opt_width, opt_height, opt_width * BPP >> 3);
+				s3v_dmacopy(240, 180, backbuf, 0, 0, 160, 120, opt_width * BPP >> 3);
+				s3v_cmdfifo_finish();	/* XXX */
 			} else {
-				s3v_imgcopy(0, 0, backbuf, 0, 0, opt_width, opt_height, opt_width * BPP >> 3);
+				s3v_imgcopy(240, 180, backbuf, 0, 0, 160, 120, opt_width * BPP >> 3);
 			}
 		} else {
 			s3v_s3dfifo_finish();
 			memcpy(fb, backbuf, opt_width * opt_height * BPP >> 3);
 		}
 
+		/*
 #if BPP == 8
 		s3v_fillrect(opt_width >> 4, opt_height >> 3, opt_width >> 1, opt_height >> 1, 6);
 #else
 		s3v_fillrect(opt_width >> 4, opt_height >> 3, opt_width >> 1, opt_height >> 1, 0x0700);
 #endif
+		*/
 		nframes++;
 	}
 end:
@@ -193,6 +198,7 @@ static const char *usage_fmt = "Usage: %s [opt]\n"
 	" -cpublit			copy frame with memcpy\n"
 	" -pioblit			copy frame with PIO blit\n"
 	" -dmablit       	copy frame with DMA blit\n"
+	" -log <file|COMn>  logfile output filename or COM port\n"
 	" -h,-help          print usage and exit\n";
 
 int parse_args(int argc, char **argv)
@@ -217,6 +223,12 @@ int parse_args(int argc, char **argv)
 				opt &= ~OPT_DMA;
 			} else if(strcmp(argv[i], "-dmablit") == 0) {
 				opt |= OPT_BLIT | OPT_DMA;
+			} else if(strcmp(argv[i], "-log") == 0) {
+				if(!argv[++i]) {
+					fprintf(stderr, "-log should be followed by a filename, COM1, or COM2\n");
+					return -1;
+				}
+				opt_logfile = argv[i];
 			} else if(strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "-help") == 0) {
 				printf(usage_fmt, argv[0]);
 				exit(0);

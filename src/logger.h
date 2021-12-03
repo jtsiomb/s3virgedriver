@@ -25,6 +25,8 @@ extern "C" {
 int init_logger(const char *fname);
 void stop_logger(void);
 
+void logmsg(const char *fmt, ...);
+
 #ifdef __cplusplus
 }
 #endif
