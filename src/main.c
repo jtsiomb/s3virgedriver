@@ -151,7 +151,7 @@ int main(int argc, char **argv)
 				s3v_dmacopy(240, 180, backbuf, 0, 0, 160, 120, opt_width * BPP >> 3);
 				s3v_cmdfifo_finish();	/* XXX */
 			} else {
-				s3v_imgcopy(240, 180, backbuf, 0, 0, 160, 120, opt_width * BPP >> 3);
+				s3v_imgcopy(0, 0, backbuf, 0, 0, 640, 480, opt_width * BPP >> 3);
 			}
 		} else {
 			s3v_s3dfifo_finish();

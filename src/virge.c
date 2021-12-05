@@ -193,8 +193,10 @@ void s3v_fillrect(int x, int y, int w, int h, int color)
 
 void s3v_imgcopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, int pitch)
 {
-	int i, j, rem, scandw = (xsz * pixsz) >> 2;
-	uint32_t *ptr = (uint32_t*)((char*)src + y * pitch + x * pixsz);
+	int i, j, sz, totalsz, scansz;
+	char *ptr = (char*)src + y * pitch + x * pixsz;
+
+	scansz = xsz * pixsz;
 
 	/* wait for the command fifo to empty, before starting image transfers */
 	s3v_cmdfifo_finish();
@@ -205,17 +207,18 @@ void s3v_imgcopy(int dstx, int dsty, void *src, int x, int y, int xsz, int ysz, 
 		S3D_CMD_LR | S3D_CMD_TB | S3D_CMD_CLIP | S3D_CMD_IALIGN_WORD |
 		S3D_CMD_ROP(ROP_SRC);
 
-	for(i=0; i<ysz; i++) {
-		/*
-		memcpy(MMREG_S3D_IMG, ptr, xsz * pixsz);
-		ptr += pitch >> 2;
-		*/
-		for(j=0; j<scandw; j++) {
-			MMREG_S3D_IMG = *ptr++;
+	if(scansz == pitch) {
+		totalsz = scansz * ysz;
+		while(totalsz > 0) {
+			sz = totalsz < 32768 ? totalsz : 32768;
+			memcpy((void*)MMIO_IMG_ADDR, ptr, sz);
+			ptr += sz;
+			totalsz -= sz;
 		}
-		rem = (pitch >> 2) - scandw;
-		if(rem > 0) {
-			ptr += rem;
+	} else {
+		for(i=0; i<ysz; i++) {
+			memcpy((void*)MMIO_IMG_ADDR, ptr, scansz);
+			ptr += pitch;
 		}
 	}
 }

@@ -91,6 +91,7 @@ void logmsg(const char *fmt, ...)
 #define UART_LSTAT		5
 
 #define DIV_9600			(115200 / 9600)
+#define DIV_38400			(115200 / 38400)
 #define LCTL_8N1			0x03
 #define LCTL_DLAB			0x80
 #define FIFO_ENABLE_CLEAR	0x07
@@ -115,8 +116,8 @@ static int setup_serial(void)
 
 	/* set clock divisor */
 	outp(iobase | UART_LCTL, LCTL_DLAB);
-	outp(iobase | UART_DIVLO, DIV_9600 & 0xff);
-	outp(iobase | UART_DIVHI, DIV_9600 >> 8);
+	outp(iobase | UART_DIVLO, DIV_38400 & 0xff);
+	outp(iobase | UART_DIVHI, DIV_38400 >> 8);
 	/* set format 8n1 */
 	outp(iobase | UART_LCTL, LCTL_8N1);
 	/* clear and enable fifo */
